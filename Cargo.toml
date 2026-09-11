@@ -1,0 +1,16 @@
+[package]
+name = "cubito_rtxr"
+version = "0.1.0"
+edition = "2021"
+# Dos binarios: la ventana interactiva y un render sin ventana que escribe
+# PPM. Sin esto, `cargo run` a secas se niega a elegir.
+default-run = "cubito_rtxr"
+
+[dependencies]
+nalgebra-glm = "0.18.0"
+minifb = "0.26.0"
+
+# El trazado es barato pero no gratis: sin optimizar, 800 x 600 en modo
+# debug se arrastra. El resto del proyecto compila igual de rapido.
+[profile.dev]
+opt-level = 3
