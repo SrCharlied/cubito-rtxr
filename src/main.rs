@@ -11,7 +11,8 @@ use std::time::Duration;
 
 use cubito_rtxr::framebuffer::Framebuffer;
 use cubito_rtxr::renderer::{render, Shading};
-use cubito_rtxr::scene::{camara_inicial, jaula, preset_inicial, teseracto};
+use cubito_rtxr::scene::{camara_inicial, jaula, preset_inicial, teseracto, teseracto_texturizado};
+use std::path::Path;
 
 const WIDTH: usize = 800;
 const HEIGHT: usize = 600;
@@ -28,6 +29,18 @@ const ROTATION_SPEED: f32 = PI / 60.0;
 /// imperceptible desde lejos y brusco desde cerca.
 const ZOOM_FRACTION: f32 = 0.06;
 
+/// Cual de las escenas se esta mostrando.
+///
+/// Un enum y no un booleano desde que son tres: con dos banderas sueltas
+/// existirian estados que no significan nada, como «texturizado y jaula a
+/// la vez».
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Escenario {
+    Teseracto,
+    Texturizado,
+    Jaula,
+}
+
 fn main() {
     let frame_delay = Duration::from_millis(16);
 
@@ -40,7 +53,22 @@ fn main() {
     // volveria a decodificar colores y a reservar vectores por nada.
     let escena_teseracto = teseracto();
     let escena_jaula = jaula();
-    let mut es_teseracto = true;
+
+    // La texturizada es la unica que carga archivos, asi que es la unica
+    // que puede faltar. Un asset ausente no tumba el programa: se avisa una
+    // vez, con el comando que los genera, y las otras dos escenas siguen
+    // disponibles. Abortar por esto dejaria sin ver lo que si esta listo.
+    let escena_texturizada = match teseracto_texturizado(Path::new("assets")) {
+        Ok(scene) => Some(scene),
+        Err(fallo) => {
+            eprintln!("aviso: la escena texturizada no esta disponible");
+            eprintln!("  {fallo}");
+            eprintln!("  generala con: python tools/generar_texturas.py");
+            None
+        }
+    };
+
+    let mut escenario = Escenario::Teseracto;
 
     let mut camera = camara_inicial();
     let hero = preset_inicial();
@@ -48,7 +76,7 @@ fn main() {
 
     println!("cubito-rtxr");
     println!("  flechas  orbitar     W / S / rueda  zoom     R  encuadre inicial");
-    println!("  T  teseracto     J  jaula difusa");
+    println!("  T  teseracto     X  teseracto texturizado     J  jaula difusa");
     println!("  1  normales     2  albedo     3  difusa     Escape  salir");
 
     // El primer cuadro cuenta como cambio pendiente, para que la ventana
@@ -120,14 +148,27 @@ fn main() {
 
         // ---------------------------------------------------------- escena
         //
-        // Las dos lecturas de la misma figura, a un toque de distancia:
+        // Las tres lecturas de la misma figura, a un toque de distancia:
         // alternar entre ellas es la forma mas rapida de ver que aporta
-        // cada capa del teseracto sobre la difusa desnuda.
-        for (tecla, quiere_teseracto) in [(Key::T, true), (Key::J, false)] {
-            if window.is_key_pressed(tecla, KeyRepeat::No) && es_teseracto != quiere_teseracto {
-                es_teseracto = quiere_teseracto;
-                redibujar = true;
+        // cada capa sobre la difusa desnuda.
+        let escenas = [
+            (Key::T, Escenario::Teseracto),
+            (Key::X, Escenario::Texturizado),
+            (Key::J, Escenario::Jaula),
+        ];
+
+        for (tecla, siguiente) in escenas {
+            if !window.is_key_pressed(tecla, KeyRepeat::No) || escenario == siguiente {
+                continue;
             }
+
+            if siguiente == Escenario::Texturizado && escena_texturizada.is_none() {
+                println!("faltan las texturas: python tools/generar_texturas.py");
+                continue;
+            }
+
+            escenario = siguiente;
+            redibujar = true;
         }
 
         // -------------------------------------------------------- presentar
@@ -138,10 +179,12 @@ fn main() {
         // por impacto. No hay razon para pagarlo por cuadro para repetir la
         // misma imagen.
         if redibujar {
-            let scene = if es_teseracto {
-                &escena_teseracto
-            } else {
-                &escena_jaula
+            let scene = match escenario {
+                Escenario::Teseracto => &escena_teseracto,
+                // El respaldo no se alcanza —la tecla no deja entrar aqui
+                // sin texturas—, pero evita un panico si eso cambiara.
+                Escenario::Texturizado => escena_texturizada.as_ref().unwrap_or(&escena_teseracto),
+                Escenario::Jaula => &escena_jaula,
             };
 
             render(&mut framebuffer, scene, &camera, shading);

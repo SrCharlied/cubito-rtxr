@@ -7,7 +7,10 @@ use crate::light::Light;
 use crate::material::Material;
 use crate::ray::Ray;
 use crate::ray_intersect::RayIntersect;
+use crate::texture::Texture;
 use nalgebra_glm::Vec3;
+use std::error::Error;
+use std::path::Path;
 
 /// Lado del cubo de la escena, y unidad de medida de todo lo demas: la
 /// distancia de la camara, la de la luz y la altura del piso se expresan en
@@ -52,6 +55,10 @@ pub struct Scene {
     pub lights: Vec<Light>,
     pub background: Color,
     pub bloom: Bloom,
+    /// Las imagenes que los materiales nombran por indice. Viven aqui y no
+    /// dentro de cada material para que `Material` siga siendo `Copy` y
+    /// para que dos materiales puedan compartir una textura sin copiarla.
+    pub textures: Vec<Texture>,
 }
 
 impl Scene {
@@ -114,6 +121,7 @@ pub fn cubito() -> Scene {
         // Nada pasa del blanco en esta escena: no hay rango perdido que
         // insinuar con un halo.
         bloom: Bloom::apagado(),
+        textures: Vec::new(),
     }
 }
 
@@ -201,7 +209,65 @@ pub fn jaula() -> Scene {
         // Nada pasa del blanco en esta escena: no hay rango perdido que
         // insinuar con un halo.
         bloom: Bloom::apagado(),
+        textures: Vec::new(),
     }
+}
+
+/// Indices de las texturas dentro de `Scene::textures`, en el orden en que
+/// `teseracto_texturizado` las carga.
+const TEXTURA_VETAS: usize = 0;
+const TEXTURA_PLASMA: usize = 1;
+
+/// El teseracto con **texturas**: las mismas dos piezas, pero con dibujo.
+///
+/// Se define como una **diferencia** contra `teseracto()` en vez de
+/// copiarlo: asi queda a la vista que lo unico que cambia son dos
+/// materiales, y cualquier ajuste a la geometria, las luces o el halo vale
+/// para las dos escenas sin tener que hacerlo dos veces.
+///
+/// Que se textura y por que:
+///
+/// - El cascaron lleva las **vetas** en la *emision*, no en el albedo. Es
+///   la unica forma de que el dibujo se vea: un cascaron que transmite el
+///   noventa por ciento casi no refleja, asi que su albedo es invisible,
+///   mientras que la emision se suma sin pesar. Las juntas del cristal
+///   quedan encendidas y el interior de cada faceta, apagado.
+/// - El nucleo lleva el **plasma**, tambien en la emision, que le quita el
+///   aspecto de bloque blanco liso y lo deja con filamentos.
+///
+/// La emision base del cascaron sube bastante respecto de la escena lisa
+/// porque ahora la textura la multiplica: donde la veta vale casi uno hay
+/// que llegar al mismo brillo que antes tenia toda la cara, y donde vale
+/// casi cero el resplandor del volumen se encarga de que la masa no quede
+/// hueca.
+///
+/// Las texturas se generan con `python tools/generar_texturas.py`, que las
+/// deja en `assets/`.
+pub fn teseracto_texturizado(assets: &Path) -> Result<Scene, Box<dyn Error>> {
+    let vetas = Texture::load_ppm(&assets.join("vetas.ppm"))?;
+    let plasma = Texture::load_ppm(&assets.join("plasma.ppm"))?;
+
+    let mut scene = teseracto();
+    scene.textures = vec![vetas, plasma];
+
+    scene.objects[0].material = scene.objects[0]
+        .material
+        .con_emision(Color::new(0.35, 1.20, 2.20))
+        .con_textura_de_emision(TEXTURA_VETAS);
+
+    // El nucleo sube todavia mas que el cascaron, y por la misma razon
+    // multiplicada por el contraste de su textura: el plasma va de 0.07 a
+    // 1.0 en energia —un rango de catorce a uno, porque los bytes del
+    // archivo se decodifican de sRGB—, asi que con la emision de la escena
+    // lisa el nucleo entero se hundiria. Escalado asi, sus rincones quedan
+    // rozando el blanco y el centro muy por encima, que es lo que deja ver
+    // los filamentos en vez de un bloque plano.
+    scene.objects[1].material = scene.objects[1]
+        .material
+        .con_emision(Color::new(8.0, 11.0, 13.0))
+        .con_textura_de_emision(TEXTURA_PLASMA);
+
+    Ok(scene)
 }
 
 /// La losa que hace de piso, con el albedo que se le pase.
@@ -305,6 +371,7 @@ pub fn teseracto() -> Scene {
         ],
         background: Color::from_hex(0x04060C),
         bloom: Bloom::teseracto(),
+        textures: Vec::new(),
     }
 }
 
@@ -384,6 +451,7 @@ mod tests {
             lights: vec![],
             background: Color::black(),
             bloom: Bloom::apagado(),
+            textures: Vec::new(),
         };
 
         let ray = Ray::new(Vec3::new(0.0, 0.0, 5.0), Vec3::new(0.0, 0.0, -1.0));
@@ -578,6 +646,55 @@ mod tests {
 
         assert_eq!(scene.lights.len(), 2);
         assert!(scene.lights.iter().all(|luz| luz.casts_shadows));
+    }
+
+    /// Las texturas del repositorio, buscadas desde la raiz del paquete
+    /// para que las pruebas no dependan del directorio de trabajo.
+    fn assets() -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("assets")
+    }
+
+    #[test]
+    fn la_escena_texturizada_carga_sus_dos_texturas() {
+        let scene = teseracto_texturizado(&assets())
+            .expect("faltan las texturas: python tools/generar_texturas.py");
+
+        assert_eq!(scene.textures.len(), 2);
+        assert_eq!(scene.objects[0].material.emission_map, Some(TEXTURA_VETAS));
+        assert_eq!(scene.objects[1].material.emission_map, Some(TEXTURA_PLASMA));
+    }
+
+    #[test]
+    fn las_texturas_van_en_la_emision_y_no_en_el_albedo() {
+        // Es la decision que hace visible el dibujo: un cascaron que
+        // transmite el noventa por ciento casi no refleja, asi que una
+        // textura de albedo ahi no se veria.
+        let scene = teseracto_texturizado(&assets()).expect("texturas");
+
+        assert_eq!(scene.objects[0].material.albedo_map, None);
+        assert!(scene.objects[0].material.emission_map.is_some());
+    }
+
+    #[test]
+    fn la_texturizada_comparte_geometria_y_luces_con_la_lisa() {
+        // Se define como una diferencia contra `teseracto()`, y esto lo
+        // fija: si alguna vez se copian en vez de derivarse, se notara.
+        let lisa = teseracto();
+        let texturizada = teseracto_texturizado(&assets()).expect("texturas");
+
+        assert_eq!(texturizada.objects.len(), lisa.objects.len());
+        assert_eq!(texturizada.lights.len(), lisa.lights.len());
+
+        for (i, (a, b)) in texturizada.objects.iter().zip(&lisa.objects).enumerate() {
+            assert_eq!(a.shape.bounds, b.shape.bounds, "objeto {i}");
+        }
+    }
+
+    #[test]
+    fn una_textura_que_falta_da_error_y_no_panico() {
+        // La ventana se apoya en esto para avisar y seguir con las otras
+        // escenas en vez de abortar.
+        assert!(teseracto_texturizado(Path::new("no/existe/jamas")).is_err());
     }
 
     #[test]

@@ -1,7 +1,7 @@
 # cubito-rtxr
 
-Raytracer minimo en Rust con **camara orbital**. Dos escenas, que son la
-misma figura leida de dos maneras:
+Raytracer minimo en Rust con **camara orbital**. Tres escenas, que son la
+misma figura leida de tres maneras:
 
 - **Jaula difusa** (`J`) — el teseracto en **luz difusa pura**: doce
   barras sobre las aristas del cubo exterior y un nucleo macizo dentro,
@@ -9,6 +9,8 @@ misma figura leida de dos maneras:
 - **Teseracto** (`T`) — el mismo objeto como el cubo cosmico: cascaron de
   vidrio azul, nucleo incandescente, marco de aristas encendido, halo,
   charco de luz y sombra tenida.
+- **Teseracto texturizado** (`X`) — el anterior con dos texturas
+  generadas: vetas de cristal en el cascaron y plasma en el nucleo.
 
 Sin reflexion y sin refraccion.
 
@@ -16,7 +18,8 @@ Sin reflexion y sin refraccion.
 
 ```bash
 cargo run --release              # ventana interactiva
-cargo test                       # 118 pruebas, sin ventana
+cargo test                       # 135 pruebas, sin ventana
+python tools/generar_texturas.py # regenera assets/, solo si hace falta
 ```
 
 Render sin ventana, util para dejar evidencia o para verificar en una
@@ -24,6 +27,7 @@ maquina sin servidor grafico:
 
 ```bash
 cargo run --release --bin render_ppm -- salida.ppm --escena teseracto --yaw 55 --pitch -18
+cargo run --release --bin render_ppm -- tex.ppm --escena texturizado --yaw 20
 cargo run --release --bin render_ppm -- jaula.ppm --escena jaula --yaw 35
 cargo run --release --bin render_ppm -- cubo.ppm --escena cubo --modo normales
 ```
@@ -38,7 +42,7 @@ codificador de PNG como dependencia.
 | Flechas | Orbitar |
 | `W` / `S` / rueda | Acercar y alejar |
 | `R` | Volver al encuadre inicial |
-| `T` / `J` | Teseracto / jaula difusa |
+| `T` / `X` / `J` | Teseracto / texturizado / jaula difusa |
 | `1` / `2` / `3` | Normales / albedo / difusa |
 | `Escape` | Salir |
 
@@ -72,6 +76,9 @@ la sombra sale azul.
 
 **6. La jaula**, que es el teseracto devuelto a la luz difusa pura. Ver
 abajo por que no basta con apagarle los efectos.
+
+**7. Las texturas**, que por fin usan el `uv` que la primitiva venia
+calculando desde el paso 2 sin que nadie lo consumiera.
 
 ## Por que el teseracto se ve asi
 
@@ -113,6 +120,44 @@ barras** sobre sus aristas. El nucleo se ve por los huecos. El precio es
 que se lee como un modelo fisico y no como el objeto de la pelicula; a
 cambio, todo lo que decide un pixel ahi es la ley de Lambert y si algo se
 interpone.
+
+## Las texturas
+
+Se generan con un script de Python de biblioteca estandar, sin
+dependencias:
+
+```bash
+python tools/generar_texturas.py
+```
+
+Deja dos PPM en `assets/`, y los archivos se versionan: el script es su
+fuente reproducible, no un paso de compilacion.
+
+| Textura | Que es | Donde se aplica |
+| --- | --- | --- |
+| `vetas.ppm` | Red de facetas: ruido de Worley leido por la diferencia entre las dos distancias mas cercanas, que vale cero justo sobre la frontera entre celdas | Emision del cascaron |
+| `plasma.ppm` | Filamentos de energia: ruido de **cresta** (`1 - abs(2n - 1)`) concentrado hacia el centro de cada cara | Emision del nucleo |
+
+Tres decisiones que conviene conocer:
+
+- **Van en la emision, no en el albedo.** Es lo unico que las hace
+  visibles: un cascaron que transmite el noventa por ciento casi no
+  refleja, asi que su albedo es invisible, mientras que la emision se suma
+  sin pesar.
+- **Son mascaras en escala de grises** y el color lo pone el material. La
+  misma imagen sirve para un cristal cyan y para uno ambar sin
+  regenerarla.
+- **Son periodicas por construccion.** Importa mas aqui que de costumbre:
+  el `uv` del cuboide se calcula por cara, asi que las seis caras
+  muestrean la misma imagen y cualquier costura se veria seis veces, justo
+  sobre las aristas.
+
+Y una consecuencia que cuesta ver de entrada: como los bytes de un archivo
+son sRGB y se decodifican a lineal al cargarlos, una mascara de rango
+aparentemente suave se vuelve muy contrastada en energia —el plasma va de
+0.07 a 1.0—. Por eso los materiales texturizados llevan emisiones mucho
+mas altas que sus equivalentes lisos: la textura los multiplica hacia
+abajo.
 
 ## Decisiones que conviene conocer
 
@@ -175,15 +220,18 @@ src/
   material.rs       albedo, emision, transmision, absorcion, marco
   light.rs          Lambert, atenuacion y ambiente
   scene.rs          las escenas, el piso y el impacto mas cercano
+  texture.rs        lector de PPM y muestreo bilineal con envoltura
   bloom.rs          halo por umbral y desenfoque de caja acumulada
   framebuffer.rs    lienzo lineal + vista empacada, y volcado a PPM
   renderer.rs       el recorrido de la imagen y los tres modos
   main.rs           ventana, teclado y presentacion
   bin/render_ppm.rs render sin ventana
+tools/
+  generar_texturas.py  generador de assets/, solo biblioteca estandar
 ```
 
 ## Siguientes pasos
 
 Pulso animado del nucleo, refraccion con Fresnel, antialiasing por
-supermuestreo, y sombras suaves muestreando una luz de area en vez de un
-punto.
+supermuestreo, sombras suaves muestreando una luz de area en vez de un
+punto, y un mapa de normales que le de relieve a las vetas.

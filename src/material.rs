@@ -34,6 +34,18 @@ pub struct Material {
     pub edge_color: Color,
     /// Ancho del marco como fraccion de la cara. Cero lo apaga.
     pub edge_width: f32,
+    /// Textura que modula el albedo, por indice dentro de `Scene::textures`.
+    ///
+    /// Un indice y no la textura misma: `Material` es `Copy` y viaja por
+    /// valor en el camino caliente, mientras que una textura son cientos de
+    /// kilobytes. Las texturas viven una sola vez en la escena y los
+    /// materiales las nombran.
+    pub albedo_map: Option<usize>,
+    /// Textura que modula la emision. Es la que hace visible el dibujo en
+    /// una superficie casi transparente: el albedo de un cascaron que
+    /// transmite el noventa por ciento apenas se ve, pero la emision se
+    /// suma sin pesar.
+    pub emission_map: Option<usize>,
 }
 
 impl Material {
@@ -47,6 +59,8 @@ impl Material {
             inner_glow: Color::black(),
             edge_color: Color::black(),
             edge_width: 0.0,
+            albedo_map: None,
+            emission_map: None,
         }
     }
 
@@ -80,6 +94,20 @@ impl Material {
     pub fn con_marco(mut self, edge_color: Color, edge_width: f32) -> Self {
         self.edge_color = edge_color;
         self.edge_width = edge_width.clamp(0.0, 0.5);
+
+        self
+    }
+
+    /// Modula el albedo con una textura de la escena.
+    pub fn con_textura_de_albedo(mut self, indice: usize) -> Self {
+        self.albedo_map = Some(indice);
+
+        self
+    }
+
+    /// Modula la emision con una textura de la escena.
+    pub fn con_textura_de_emision(mut self, indice: usize) -> Self {
+        self.emission_map = Some(indice);
 
         self
     }
@@ -171,6 +199,14 @@ mod tests {
         for uv in [Vec2::zeros(), Vec2::new(0.5, 0.5), Vec2::new(1.0, 1.0)] {
             assert_eq!(material.edge_factor(&uv), 0.0);
         }
+    }
+
+    #[test]
+    fn los_mapas_arrancan_vacios() {
+        let material = Material::opaco(Color::white());
+
+        assert_eq!(material.albedo_map, None);
+        assert_eq!(material.emission_map, None);
     }
 
     #[test]

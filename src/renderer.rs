@@ -8,7 +8,7 @@ use crate::material::{beer, Material};
 use crate::ray::Ray;
 use crate::scene::{Object, Scene};
 use crate::EPSILON;
-use nalgebra_glm::Vec3;
+use nalgebra_glm::{Vec2, Vec3};
 
 /// Cuantos cascarones puede atravesar un rayo antes de rendirse.
 ///
@@ -67,7 +67,9 @@ fn traza(scene: &Scene, ray: &Ray, shading: Shading, depth: usize) -> (Color, f3
 
     let color = match shading {
         Shading::Normals => color_por_normal(&hit),
-        Shading::Albedo => objeto.material.albedo,
+        Shading::Albedo => {
+            objeto.material.albedo * muestra(scene, objeto.material.albedo_map, &hit.uv)
+        }
         Shading::Diffuse => sombrear(scene, ray, &hit, objeto, shading, depth),
     };
 
@@ -94,8 +96,16 @@ fn sombrear(
     depth: usize,
 ) -> Color {
     let material = &objeto.material;
-    let superficie = material.emission + material.edge_emission(&hit.uv);
-    let reflejado = difusa(scene, hit, material.albedo);
+
+    // Las texturas **modulan** lo que el material ya declara, no lo
+    // reemplazan: el material pone el color y la escala, y la imagen dice
+    // como se reparten sobre la cara. Asi la misma textura en escala de
+    // grises sirve para un cristal cyan y para uno ambar.
+    let albedo = material.albedo * muestra(scene, material.albedo_map, &hit.uv);
+    let emision = material.emission * muestra(scene, material.emission_map, &hit.uv);
+
+    let superficie = emision + material.edge_emission(&hit.uv);
+    let reflejado = difusa(scene, hit, albedo);
 
     if material.transmission <= 0.0 || depth >= MAX_TRANSMISSION_DEPTH {
         return reflejado + superficie;
@@ -116,6 +126,23 @@ fn sombrear(
         + detras * material.transmission
         + superficie
         + material.inner_glow * camino
+}
+
+/// Lo que la textura dice en este punto, o blanco si el material no tiene
+/// ninguna.
+///
+/// Blanco y no negro porque el valor **multiplica**: la ausencia de textura
+/// tiene que ser el elemento neutro, no apagar el canal.
+///
+/// Un indice que no existe tambien devuelve blanco. Es la unica respuesta
+/// razonable en el camino caliente: reventar por cada pixel de una escena
+/// mal armada no ayuda a nadie, y devolver negro la dejaria en tinieblas
+/// sin decir por que.
+fn muestra(scene: &Scene, mapa: Option<usize>, uv: &Vec2) -> Color {
+    match mapa.and_then(|indice| scene.textures.get(indice)) {
+        Some(textura) => textura.sample(uv),
+        None => Color::white(),
+    }
 }
 
 /// Lo que se ve **a traves** de esta superficie, ya tenido por el medio.
@@ -306,7 +333,13 @@ pub fn render(framebuffer: &mut Framebuffer, scene: &Scene, camera: &Camera, sha
 mod tests {
     use super::*;
     use crate::scene::{camara_inicial, cubito, jaula, teseracto, ALTURA_DEL_PISO};
-    use nalgebra_glm::Vec3;
+    use nalgebra_glm::{Vec2, Vec3};
+
+    /// Las texturas del repositorio, buscadas desde la raiz del paquete
+    /// para que las pruebas no dependan del directorio de trabajo.
+    fn assets() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets")
+    }
 
     /// Resolucion chica: estas pruebas verifican relaciones entre pixeles,
     /// no la imagen final, y a 80 x 60 corren en un parpadeo.
@@ -603,6 +636,7 @@ mod tests {
             lights: vec![],
             background: Color::new(0.25, 0.5, 0.75),
             bloom: crate::bloom::Bloom::apagado(),
+            textures: Vec::new(),
         };
 
         let ray = Ray::new(Vec3::new(0.0, 0.0, 9.0), Vec3::new(0.0, 0.0, -1.0));
@@ -716,6 +750,94 @@ mod tests {
         assert!(sombreados > 50, "solo {sombreados} puntos en sombra");
     }
 
+    // ------------------------------------------------------- texturas
+
+    #[test]
+    fn un_material_sin_textura_no_altera_nada() {
+        // Blanco es el elemento neutro del producto: la ausencia de textura
+        // no puede apagar el canal.
+        let scene = teseracto();
+
+        assert_eq!(
+            super::muestra(&scene, None, &Vec2::new(0.3, 0.7)),
+            Color::white()
+        );
+    }
+
+    #[test]
+    fn un_indice_de_textura_que_no_existe_no_revienta() {
+        let scene = teseracto();
+
+        assert_eq!(
+            super::muestra(&scene, Some(9), &Vec2::new(0.3, 0.7)),
+            Color::white()
+        );
+    }
+
+    #[test]
+    fn la_textura_agrega_detalle_a_la_cara_del_cascaron() {
+        // Lo que una textura aporta es **detalle de alta frecuencia**, no
+        // mas rango: el rango de la imagen lo domina el nucleo, que en las
+        // dos escenas esta igual de encendido. Asi que se mide lo que
+        // cambia de un pixel al siguiente sobre una fila que cruza el
+        // cascaron, sin pasar por el nucleo.
+        let texturizada = crate::scene::teseracto_texturizado(&assets())
+            .expect("faltan las texturas: python tools/generar_texturas.py");
+        let lisa = teseracto();
+        let camera = camara_inicial();
+        let nucleo = lisa.objects[1].shape;
+
+        let aspereza = |scene: &Scene| {
+            let mut total = 0.0;
+
+            for y in 0..ALTO {
+                let mut anterior: Option<f32> = None;
+
+                for x in 0..ANCHO {
+                    let ray = camera.ray_from_pixel(x, y, ANCHO, ALTO);
+
+                    // Dos filtros. El cascaron es el unico objeto que
+                    // transmite, asi que eso lo identifica sin depender de
+                    // su indice; y se descartan los rayos que ademas
+                    // atraviesan el nucleo, porque lo que se ve **detras**
+                    // del vidrio no es lo que la textura dibuja y su brillo
+                    // se comeria la medida.
+                    let sirve = scene
+                        .cast(&ray)
+                        .is_some_and(|(_, objeto)| objeto.material.transmission > 0.0)
+                        && nucleo.thickness(&ray) == 0.0;
+
+                    if !sirve {
+                        anterior = None;
+                        continue;
+                    }
+
+                    let actual = super::trace(scene, &ray, Shading::Diffuse).b;
+                    if let Some(previo) = anterior {
+                        total += (actual - previo).abs();
+                    }
+                    anterior = Some(actual);
+                }
+            }
+
+            total
+        };
+
+        let con = aspereza(&texturizada);
+        let sin = aspereza(&lisa);
+
+        assert!(sin > 0.0, "ningun pixel cayo sobre el cascaron");
+
+        // La escena lisa no parte de cero: el marco de las aristas ya es un
+        // salto brusco en cada cara, y esta en las dos. Lo que se exige es
+        // que la textura **duplique** con holgura la aspereza, que es el
+        // orden del efecto medido.
+        assert!(
+            con > sin * 1.8,
+            "la textura deberia agregar detalle: {con} contra {sin}"
+        );
+    }
+
     // ------------------------------------------------- piso y sombras
 
     #[test]
@@ -803,6 +925,7 @@ mod tests {
                 lights: vec![],
                 background: Color::black(),
                 bloom: crate::bloom::Bloom::apagado(),
+                textures: Vec::new(),
             },
             &bajo_el_objeto,
             albedo_del_piso(),
@@ -814,6 +937,7 @@ mod tests {
                 lights: vec![*interna],
                 background: Color::black(),
                 bloom: crate::bloom::Bloom::apagado(),
+                textures: Vec::new(),
             },
             &bajo_el_objeto,
             albedo_del_piso(),
@@ -886,6 +1010,7 @@ mod tests {
             lights: vec![],
             background: Color::black(),
             bloom: crate::bloom::Bloom::apagado(),
+            textures: Vec::new(),
         }
     }
 

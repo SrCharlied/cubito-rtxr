@@ -23,6 +23,7 @@ pub mod ray;
 pub mod ray_intersect;
 pub mod renderer;
 pub mod scene;
+pub mod texture;
 
 /// Margen para despegar un rayo de la superficie que lo origino y para
 /// recortar impactos degenerados justo sobre el origen.

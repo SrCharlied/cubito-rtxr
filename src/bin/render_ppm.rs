@@ -14,7 +14,8 @@ use std::process::ExitCode;
 
 use cubito_rtxr::framebuffer::Framebuffer;
 use cubito_rtxr::renderer::{render, Shading};
-use cubito_rtxr::scene::{camara_inicial, cubito, jaula, teseracto, Scene};
+use cubito_rtxr::scene::{camara_inicial, cubito, jaula, teseracto, teseracto_texturizado, Scene};
+use std::path::Path;
 
 const WIDTH: usize = 800;
 const HEIGHT: usize = 600;
@@ -25,7 +26,29 @@ struct Opciones {
     yaw: f32,
     pitch: f32,
     shading: Shading,
-    escena: fn() -> Scene,
+    escena: Escena,
+}
+
+/// Que escena trazar. La texturizada no es una funcion mas porque **puede
+/// fallar**: carga archivos, y un asset que falta tiene que producir un
+/// mensaje util y no un panico.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Escena {
+    Teseracto,
+    Texturizado,
+    Jaula,
+    Cubo,
+}
+
+impl Escena {
+    fn construir(self) -> Result<Scene, Box<dyn std::error::Error>> {
+        Ok(match self {
+            Escena::Teseracto => teseracto(),
+            Escena::Texturizado => teseracto_texturizado(Path::new("assets"))?,
+            Escena::Jaula => jaula(),
+            Escena::Cubo => cubito(),
+        })
+    }
 }
 
 fn main() -> ExitCode {
@@ -33,14 +56,21 @@ fn main() -> ExitCode {
         Ok(opciones) => opciones,
         Err(fallo) => {
             eprintln!("error: {fallo}");
-            eprintln!("uso: render_ppm [salida.ppm] [--escena teseracto|jaula|cubo]");
+            eprintln!("uso: render_ppm [salida.ppm] [--escena teseracto|texturizado|jaula|cubo]");
             eprintln!("                [--yaw grados] [--pitch grados]");
             eprintln!("                [--modo normales|albedo|difusa]");
             return ExitCode::FAILURE;
         }
     };
 
-    let scene = (opciones.escena)();
+    let scene = match opciones.escena.construir() {
+        Ok(scene) => scene,
+        Err(fallo) => {
+            eprintln!("error: {fallo}");
+            eprintln!("  genera las texturas con: python tools/generar_texturas.py");
+            return ExitCode::FAILURE;
+        }
+    };
     let mut camera = camara_inicial();
     camera.orbit(opciones.yaw.to_radians(), opciones.pitch.to_radians());
 
@@ -73,7 +103,7 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Opciones, String> {
         yaw: 0.0,
         pitch: 0.0,
         shading: Shading::Diffuse,
-        escena: teseracto,
+        escena: Escena::Teseracto,
     };
     let mut args = args.peekable();
 
@@ -83,9 +113,10 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Opciones, String> {
             "--pitch" => opciones.pitch = grados(args.next(), "--pitch")?,
             "--escena" => {
                 opciones.escena = match args.next().as_deref() {
-                    Some("teseracto") => teseracto,
-                    Some("jaula") => jaula,
-                    Some("cubo") => cubito,
+                    Some("teseracto") => Escena::Teseracto,
+                    Some("texturizado") => Escena::Texturizado,
+                    Some("jaula") => Escena::Jaula,
+                    Some("cubo") => Escena::Cubo,
                     Some(otro) => return Err(format!("escena desconocida: {otro}")),
                     None => return Err("--escena espera un nombre".to_string()),
                 }
