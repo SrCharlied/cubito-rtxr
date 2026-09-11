@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use cubito_rtxr::framebuffer::Framebuffer;
 use cubito_rtxr::renderer::{render, Shading};
-use cubito_rtxr::scene::{camara_inicial, cubito, preset_inicial, teseracto};
+use cubito_rtxr::scene::{camara_inicial, jaula, preset_inicial, teseracto};
 
 const WIDTH: usize = 800;
 const HEIGHT: usize = 600;
@@ -39,7 +39,7 @@ fn main() {
     // referencia: son baratas, pero rehacerlas en cada cambio de tecla
     // volveria a decodificar colores y a reservar vectores por nada.
     let escena_teseracto = teseracto();
-    let escena_cubo = cubito();
+    let escena_jaula = jaula();
     let mut es_teseracto = true;
 
     let mut camera = camara_inicial();
@@ -48,7 +48,7 @@ fn main() {
 
     println!("cubito-rtxr");
     println!("  flechas  orbitar     W / S / rueda  zoom     R  encuadre inicial");
-    println!("  T  teseracto     C  cubo mate");
+    println!("  T  teseracto     J  jaula difusa");
     println!("  1  normales     2  albedo     3  difusa     Escape  salir");
 
     // El primer cuadro cuenta como cambio pendiente, para que la ventana
@@ -120,10 +120,10 @@ fn main() {
 
         // ---------------------------------------------------------- escena
         //
-        // El cubo mate se deja a un toque de distancia porque es la
-        // referencia: alternar entre los dos es la forma mas rapida de ver
-        // que aporta cada capa del teseracto.
-        for (tecla, quiere_teseracto) in [(Key::T, true), (Key::C, false)] {
+        // Las dos lecturas de la misma figura, a un toque de distancia:
+        // alternar entre ellas es la forma mas rapida de ver que aporta
+        // cada capa del teseracto sobre la difusa desnuda.
+        for (tecla, quiere_teseracto) in [(Key::T, true), (Key::J, false)] {
             if window.is_key_pressed(tecla, KeyRepeat::No) && es_teseracto != quiere_teseracto {
                 es_teseracto = quiere_teseracto;
                 redibujar = true;
@@ -132,15 +132,16 @@ fn main() {
 
         // -------------------------------------------------------- presentar
         //
-        // Se traza solo cuando algo cambio. El teseracto cuesta mas que el
-        // cubo mate —cada rayo primario atraviesa el vidrio y el halo pasa
-        // seis veces sobre la imagen—, y no hay razon para pagarlo por
-        // cuadro para repetir la misma imagen.
+        // Se traza solo cuando algo cambio. Las dos escenas cuestan: el
+        // teseracto atraviesa vidrio y pasa el halo seis veces sobre la
+        // imagen, y la jaula resuelve catorce objetos y dos rayos de sombra
+        // por impacto. No hay razon para pagarlo por cuadro para repetir la
+        // misma imagen.
         if redibujar {
             let scene = if es_teseracto {
                 &escena_teseracto
             } else {
-                &escena_cubo
+                &escena_jaula
             };
 
             render(&mut framebuffer, scene, &camera, shading);

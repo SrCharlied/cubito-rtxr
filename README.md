@@ -1,14 +1,14 @@
 # cubito-rtxr
 
-Raytracer minimo en Rust con **camara orbital**. Dos escenas:
+Raytracer minimo en Rust con **camara orbital**. Dos escenas, que son la
+misma figura leida de dos maneras:
 
-- **Teseracto** — el cubo cosmico flotando sobre un piso: cascaron de
+- **Jaula difusa** (`J`) — el teseracto en **luz difusa pura**: doce
+  barras sobre las aristas del cubo exterior y un nucleo macizo dentro,
+  sobre un piso. Lambert y sombras, nada mas. Es la escena del enunciado.
+- **Teseracto** (`T`) — el mismo objeto como el cubo cosmico: cascaron de
   vidrio azul, nucleo incandescente, marco de aristas encendido, halo,
   charco de luz y sombra tenida.
-- **Cubo mate** — el cubo opaco sobre el mismo piso, con **iluminacion
-  difusa pura**: Lambert, su sombra y nada mas. Ni emision, ni
-  transmision, ni halo. Es la escena del enunciado, y la referencia contra
-  la cual se lee el teseracto.
 
 Sin reflexion y sin refraccion.
 
@@ -16,7 +16,7 @@ Sin reflexion y sin refraccion.
 
 ```bash
 cargo run --release              # ventana interactiva
-cargo test                       # 110 pruebas, sin ventana
+cargo test                       # 118 pruebas, sin ventana
 ```
 
 Render sin ventana, util para dejar evidencia o para verificar en una
@@ -24,6 +24,7 @@ maquina sin servidor grafico:
 
 ```bash
 cargo run --release --bin render_ppm -- salida.ppm --escena teseracto --yaw 55 --pitch -18
+cargo run --release --bin render_ppm -- jaula.ppm --escena jaula --yaw 35
 cargo run --release --bin render_ppm -- cubo.ppm --escena cubo --modo normales
 ```
 
@@ -37,7 +38,7 @@ codificador de PNG como dependencia.
 | Flechas | Orbitar |
 | `W` / `S` / rueda | Acercar y alejar |
 | `R` | Volver al encuadre inicial |
-| `T` / `C` | Teseracto / cubo mate |
+| `T` / `J` | Teseracto / jaula difusa |
 | `1` / `2` / `3` | Normales / albedo / difusa |
 | `Escape` | Salir |
 
@@ -65,8 +66,12 @@ resplandor de volumen y marco de aristas; `bloom` agrega el halo.
 aplastado: no hizo falta primitiva nueva. Con el aparecen los rayos de
 sombra, que hasta aqui no tenian sentido —un objeto convexo y solo no
 puede darse sombra a si mismo—, y con ellos el tope de camara que impide
-bajar bajo la losa. En el cubo mate la sombra es dura y neutra, como
-corresponde a un opaco; en el teseracto sale azul.
+bajar bajo la losa. En la jaula las sombras son duras y neutras, como
+corresponde a un opaco, y las piezas se ocluyen entre si; en el teseracto
+la sombra sale azul.
+
+**6. La jaula**, que es el teseracto devuelto a la luz difusa pura. Ver
+abajo por que no basta con apagarle los efectos.
 
 ## Por que el teseracto se ve asi
 
@@ -87,6 +92,27 @@ Siete piezas, y ninguna es un reflejo:
 | Halo | Derrama lo que paso del blanco, **antes** de recortar a 8 bits | `bloom` |
 | Charco de luz | Una segunda luz en el centro del objeto, que es la que pinta el piso de azul | `scene::teseracto` |
 | Sombra tenida | El rayo de sombra acumula transmision y absorcion en vez de devolver si/no | `renderer::transmitancia` |
+
+## Por que la jaula existe
+
+La pregunta natural es: ¿y si al teseracto simplemente le apagamos todo y
+lo dejamos en difusa pura? No funciona, y el motivo es mas profundo que
+perder el brillo.
+
+Un cubo opaco dentro de otro cubo opaco **no se ve**. Sin transmision, el
+cascaron tapa el nucleo y lo que queda es un hexagono azul liso,
+indistinguible de un cubo cualquiera. Se puede comprobar sin tocar codigo:
+abra el teseracto y presione `2`, el modo albedo, que es opaco a
+proposito. Lo que se pierde al apagar el vidrio no es el brillo: es la
+estructura, porque el «cubo dentro del cubo» solo existia gracias a que se
+podia ver a traves del cascaron.
+
+La jaula resuelve eso dejando de pedirle al material lo que puede dar la
+geometria: el cubo exterior deja de ser una caja y pasa a ser **doce
+barras** sobre sus aristas. El nucleo se ve por los huecos. El precio es
+que se lee como un modelo fisico y no como el objeto de la pelicula; a
+cambio, todo lo que decide un pixel ahi es la ley de Lambert y si algo se
+interpone.
 
 ## Decisiones que conviene conocer
 
@@ -124,10 +150,15 @@ Siete piezas, y ninguna es un reflejo:
   debajo del piso». Se corrige la **posicion** despues de mover y no el
   angulo antes, porque el pitch admisible depende del radio y un tope
   calculado una vez queda flojo tras un zoom.
-- **Los dos cubos flotan sobre el piso.** Apoyados, su sombra nace debajo
-  y queda escondida por el propio objeto justo donde se la quiere ver. Y
-  compartiendo posicion, alternar entre las escenas con `C` y `T` compara
-  materiales sin que la silueta se mueva de sitio.
+- **Las dos escenas comparten figura, tamano y posicion.** Alternar entre
+  ellas con `J` y `T` compara materiales sin que la silueta se mueva de
+  sitio; es la forma mas rapida de ver que aporta cada capa.
+- **Todo flota sobre el piso.** Apoyado, la sombra nace debajo del objeto
+  y queda escondida por el propio objeto justo donde se la quiere ver.
+- **Varias luces siguen siendo luz difusa.** La jaula usa dos, una calida
+  y una fria: lo que define a la difusa es la ley de Lambert, no cuantas
+  lamparas hay. Con una sola, la mitad de las barras cae a puro ambiente y
+  la jaula se lee plana.
 - **Un rayo por pixel, sin antialiasing.** Las aristas salen duras.
 
 ## Estructura
@@ -143,7 +174,7 @@ src/
   color.rs          color lineal, con sRGB solo en los bordes
   material.rs       albedo, emision, transmision, absorcion, marco
   light.rs          Lambert, atenuacion y ambiente
-  scene.rs          las dos escenas, el piso y el impacto mas cercano
+  scene.rs          las escenas, el piso y el impacto mas cercano
   bloom.rs          halo por umbral y desenfoque de caja acumulada
   framebuffer.rs    lienzo lineal + vista empacada, y volcado a PPM
   renderer.rs       el recorrido de la imagen y los tres modos

@@ -84,22 +84,20 @@ impl Scene {
     }
 }
 
-/// El cubo mate: opaco, naranja, una luz, un piso y **nada mas**.
+/// Un cubo mate sobre un piso: opaco, naranja, una luz y **nada mas**.
 ///
-/// Es la escena del enunciado, y por eso se mantiene deliberadamente
-/// pobre: aqui no hay emision, ni transmision, ni halo. Lo unico que
-/// decide el color de un pixel es la ley de Lambert y si algo se
-/// interpone. Tambien es la referencia contra la cual se lee el teseracto.
+/// Es el caso minimo del enunciado —un cubo, luz difusa— y se queda en el
+/// proyecto por dos razones, aunque la ventana ya no lo muestre: es la
+/// escena mas simple donde la difusa se ve sola, y varias pruebas se
+/// apoyan en eso. Sigue disponible en `render_ppm --escena cubo`.
 ///
 /// La luz va muy arriba y adelantada, deliberadamente **desalineada** del
 /// ojo: puesta detras de la camara, las tres caras visibles recibirian casi
 /// la misma cantidad de luz y el cubo se veria como un hexagono plano.
 ///
-/// El cubo **flota** sobre el piso, igual que el teseracto, por dos
-/// razones. Apoyado, su sombra nace debajo de el y queda escondida por el
-/// propio cubo justo donde se la quiere ver. Y manteniendo la misma
-/// posicion en las dos escenas, alternar entre ellas con `C` y `T` compara
-/// materiales sin que la silueta se mueva de sitio.
+/// El cubo **flota** sobre el piso, igual que las otras dos escenas.
+/// Apoyado, su sombra nace debajo de el y queda escondida por el propio
+/// cubo justo donde se la quiere ver.
 pub fn cubito() -> Scene {
     Scene {
         objects: vec![
@@ -112,6 +110,93 @@ pub fn cubito() -> Scene {
             losa(Color::from_hex(0x3E4657)),
         ],
         lights: vec![Light::blanca(Vec3::new(1.0, 4.0, 2.0) * LADO * 0.75, 1.25)],
+        background: Color::from_hex(0x10141C),
+        // Nada pasa del blanco en esta escena: no hay rango perdido que
+        // insinuar con un halo.
+        bloom: Bloom::apagado(),
+    }
+}
+
+/// Grosor de las barras de la jaula, como fraccion del lado. Lo bastante
+/// finas para que se vea el nucleo por los huecos, lo bastante gruesas
+/// para que cada una tenga volumen propio y se sombreen entre si.
+const GROSOR_BARRA: f32 = LADO * 0.09;
+
+/// El teseracto en **luz difusa pura**: la misma figura, sin una sola gota
+/// de emision, transmision ni halo.
+///
+/// Es la escena del enunciado, y nace de una pregunta: si a un teseracto
+/// se le quita la transmision, ¿que queda? Con un cascaron solido, nada:
+/// un cubo opaco dentro de otro cubo opaco **no se ve**, y el resultado es
+/// un hexagono liso. Lo que se pierde al apagar el vidrio no es el brillo,
+/// es la estructura.
+///
+/// La salida es dejar de pedirle al material lo que puede dar la
+/// geometria. Aqui el cubo exterior no es una caja sino **doce barras**
+/// sobre sus aristas, y el nucleo se ve por los huecos. Ninguna
+/// transmision de por medio: es una jaula, y lo que hay dentro se ve
+/// porque la jaula esta abierta.
+///
+/// El precio es que se lee como un modelo fisico —una escultura de
+/// varillas con una pieza maciza dentro— y no como el objeto de la
+/// pelicula. Es un precio justo: a cambio, todo lo que decide el color de
+/// un pixel en esta escena es la ley de Lambert y si algo se interpone.
+pub fn jaula() -> Scene {
+    let mut objects = Vec::with_capacity(14);
+    let marco = Material::opaco(Color::from_hex(0xE2703A));
+    let medio = LADO * 0.5;
+    // Las barras se estiran un grosor de mas para que lleguen al plano
+    // exterior de la esquina. Se traslapan de a tres ahi, y ese traslape es
+    // justo lo que dibuja una esquina cuadrada en vez de tres puntas
+    // sueltas. Que se solapen no le molesta a nadie: `cast` se queda con el
+    // impacto mas cercano.
+    let largo = LADO + GROSOR_BARRA;
+
+    // Las doce aristas son cuatro por eje: la barra se estira sobre su eje
+    // y queda fina en los otros dos, y las cuatro copias salen de los
+    // cuatro signos de esas dos coordenadas.
+    for eje in 0..3 {
+        let (otro_a, otro_b) = ((eje + 1) % 3, (eje + 2) % 3);
+
+        for (signo_a, signo_b) in [(-1.0, -1.0), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)] {
+            let mut centro = Vec3::zeros();
+            let mut tamano = Vec3::new(GROSOR_BARRA, GROSOR_BARRA, GROSOR_BARRA);
+
+            tamano[eje] = largo;
+            centro[otro_a] = signo_a * medio;
+            centro[otro_b] = signo_b * medio;
+
+            objects.push(Object {
+                shape: Cuboid::centrado(centro, tamano),
+                material: marco,
+            });
+        }
+    }
+
+    // El nucleo, del mismo tamano que el del teseracto: hueso contra cobre,
+    // que bajo luz difusa separa las dos piezas sin necesidad de brillo.
+    objects.push(Object {
+        shape: Cuboid::cubo(Vec3::zeros(), LADO * 0.42),
+        material: Material::opaco(Color::from_hex(0xE8DCC8)),
+    });
+    objects.push(losa(Color::from_hex(0x3E4657)));
+
+    Scene {
+        objects,
+        // Dos luces, y las dos proyectan sombra. Varias luces siguen siendo
+        // luz difusa: lo que define a la difusa es la ley de Lambert, no
+        // cuantas lamparas hay. Con una sola, la mitad de las barras cae a
+        // puro ambiente y la jaula se lee plana; con dos de temperaturas
+        // distintas, cada barra recibe algo por los dos lados y las sombras
+        // se cruzan con tintes distintos.
+        lights: vec![
+            // Clave calida, arriba y del lado del ojo.
+            Light::blanca(Vec3::new(1.0, 4.0, 2.0) * LADO * 0.75, 1.25)
+                .con_color(Color::from_hex(0xFFE8D0)),
+            // Relleno frio y bajo, desde el lado contrario.
+            Light::blanca(Vec3::new(-2.2, 1.4, -1.8) * LADO * 0.7, 0.55)
+                .con_color(Color::from_hex(0x9FC4FF)),
+        ],
         background: Color::from_hex(0x10141C),
         // Nada pasa del blanco en esta escena: no hay rango perdido que
         // insinuar con un halo.
@@ -395,6 +480,104 @@ mod tests {
             cascaron.b
         );
         assert!(nucleo.b > 1.0, "el nucleo tiene que pasar del blanco");
+    }
+
+    #[test]
+    fn la_jaula_son_doce_barras_un_nucleo_y_un_piso() {
+        assert_eq!(jaula().objects.len(), 14);
+    }
+
+    #[test]
+    fn cada_barra_es_larga_en_un_solo_eje() {
+        // Una barra que fuera larga en dos ejes seria una placa, y la jaula
+        // dejaria de dejar ver el nucleo.
+        let scene = jaula();
+        let largo = LADO + GROSOR_BARRA;
+
+        for (i, barra) in scene.objects.iter().take(12).enumerate() {
+            let bounds = barra.shape.bounds;
+            let tamano = bounds.max - bounds.min;
+
+            let largos = (0..3).filter(|&e| (tamano[e] - largo).abs() < 1e-5).count();
+            let finos = (0..3)
+                .filter(|&e| (tamano[e] - GROSOR_BARRA).abs() < 1e-5)
+                .count();
+
+            assert_eq!(largos, 1, "barra {i}: {tamano:?}");
+            assert_eq!(finos, 2, "barra {i}: {tamano:?}");
+        }
+    }
+
+    #[test]
+    fn las_doce_barras_ocupan_aristas_distintas() {
+        let scene = jaula();
+        let mut centros: Vec<Vec3> = Vec::new();
+
+        for barra in scene.objects.iter().take(12) {
+            let centro = barra.shape.bounds.centro();
+
+            assert!(
+                !centros.iter().any(|c| (c - centro).magnitude() < 1e-5),
+                "dos barras en la misma arista: {centro:?}"
+            );
+            centros.push(centro);
+        }
+    }
+
+    #[test]
+    fn la_jaula_encierra_el_mismo_volumen_que_el_teseracto() {
+        // Las barras tienen que delimitar el cubo de lado LADO, no una caja
+        // de otro tamano: es lo que hace comparables las dos escenas al
+        // alternar entre ellas sin mover la camara.
+        let scene = jaula();
+        let mut minimo = Vec3::new(f32::MAX, f32::MAX, f32::MAX);
+        let mut maximo = Vec3::new(f32::MIN, f32::MIN, f32::MIN);
+
+        for barra in scene.objects.iter().take(12) {
+            for eje in 0..3 {
+                minimo[eje] = minimo[eje].min(barra.shape.bounds.min[eje]);
+                maximo[eje] = maximo[eje].max(barra.shape.bounds.max[eje]);
+            }
+        }
+
+        // El cubo de lado LADO, crecido medio grosor por lado: es lo que
+        // sobresale al estirar las barras para cuadrar las esquinas.
+        let esperado = LADO * 0.5 + GROSOR_BARRA * 0.5;
+
+        for eje in 0..3 {
+            assert!(
+                (minimo[eje] + esperado).abs() < 1e-5,
+                "eje {eje}: {minimo:?}"
+            );
+            assert!(
+                (maximo[eje] - esperado).abs() < 1e-5,
+                "eje {eje}: {maximo:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn el_nucleo_de_la_jaula_cabe_entre_las_barras() {
+        // Si tocara las barras dejaria de leerse como una pieza suelta
+        // dentro de la jaula.
+        let scene = jaula();
+        let nucleo = scene.objects[12].shape.bounds;
+        let hueco = LADO * 0.5 - GROSOR_BARRA;
+
+        for eje in 0..3 {
+            assert!(nucleo.max[eje] < hueco, "eje {eje}: {nucleo:?}");
+            assert!(nucleo.min[eje] > -hueco, "eje {eje}: {nucleo:?}");
+        }
+    }
+
+    #[test]
+    fn la_jaula_tiene_dos_luces_y_las_dos_proyectan_sombra() {
+        // Varias luces siguen siendo luz difusa: lo que define a la difusa
+        // es la ley de Lambert, no cuantas lamparas hay.
+        let scene = jaula();
+
+        assert_eq!(scene.lights.len(), 2);
+        assert!(scene.lights.iter().all(|luz| luz.casts_shadows));
     }
 
     #[test]

@@ -305,7 +305,7 @@ pub fn render(framebuffer: &mut Framebuffer, scene: &Scene, camera: &Camera, sha
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scene::{camara_inicial, cubito, teseracto, ALTURA_DEL_PISO};
+    use crate::scene::{camara_inicial, cubito, jaula, teseracto, ALTURA_DEL_PISO};
     use nalgebra_glm::Vec3;
 
     /// Resolucion chica: estas pruebas verifican relaciones entre pixeles,
@@ -641,26 +641,79 @@ mod tests {
     }
 
     #[test]
-    fn la_escena_del_enunciado_es_difusa_y_nada_mas() {
+    fn las_escenas_del_enunciado_son_difusas_y_nada_mas() {
         // Guarda del requisito: «un cubo en su raytracer solo con luz
         // difusa». Si alguna vez se le cuela emision, transmision o halo a
-        // esta escena, esto lo detiene.
-        let scene = cubito();
+        // una de estas escenas, esto lo detiene.
+        for (nombre, scene) in [("jaula", jaula()), ("cubo mate", cubito())] {
+            assert!(!scene.bloom.esta_activo(), "{nombre} lleva halo");
 
-        assert!(!scene.bloom.esta_activo(), "la escena mate no lleva halo");
+            for (i, objeto) in scene.objects.iter().enumerate() {
+                let material = &objeto.material;
 
-        for (i, objeto) in scene.objects.iter().enumerate() {
-            let material = &objeto.material;
-
-            assert_eq!(material.emission, Color::black(), "objeto {i} emite");
-            assert_eq!(material.transmission, 0.0, "objeto {i} transmite");
-            assert_eq!(
-                material.inner_glow,
-                Color::black(),
-                "objeto {i} resplandece"
-            );
-            assert_eq!(material.edge_width, 0.0, "objeto {i} tiene marco");
+                assert_eq!(material.emission, Color::black(), "{nombre}: {i} emite");
+                assert_eq!(material.transmission, 0.0, "{nombre}: {i} transmite");
+                assert_eq!(
+                    material.inner_glow,
+                    Color::black(),
+                    "{nombre}: {i} resplandece"
+                );
+                assert_eq!(material.edge_width, 0.0, "{nombre}: {i} tiene marco");
+            }
         }
+    }
+
+    #[test]
+    fn el_nucleo_de_la_jaula_se_ve_sin_transmision() {
+        // La razon de ser de esta escena: la estructura del teseracto
+        // —cubo dentro de cubo— sobrevive a la difusa pura porque el
+        // interior se ve por los huecos, no a traves de un vidrio.
+        let scene = jaula();
+        let camera = camara_inicial();
+
+        let (_, objeto) = scene
+            .cast(&camera.ray_from_pixel(ANCHO / 2, ALTO / 2, ANCHO, ALTO))
+            .expect("el rayo central toca algo");
+
+        let nucleo = scene.objects[12].material.albedo;
+
+        assert_eq!(objeto.material.albedo, nucleo, "el centro es el nucleo");
+        assert_eq!(objeto.material.transmission, 0.0, "y es opaco");
+    }
+
+    #[test]
+    fn las_piezas_de_la_jaula_se_sombrean_entre_si() {
+        // Con catorce objetos ya hay oclusion mutua, que es lo que una
+        // sola caja convexa no podia demostrar: se busca algun punto
+        // visible al que la clave no llegue por culpa de otra pieza.
+        let scene = jaula();
+        let camera = camara_inicial();
+        let clave = &scene.lights[0];
+        let mut sombreados = 0;
+
+        for y in 0..ALTO {
+            for x in 0..ANCHO {
+                let Some((hit, _)) = scene.cast(&camera.ray_from_pixel(x, y, ANCHO, ALTO)) else {
+                    continue;
+                };
+
+                let hacia_luz = clave.position - hit.point;
+                let distancia = hacia_luz.magnitude();
+                let t = super::transmitancia(
+                    &scene,
+                    &hit.point,
+                    &(hacia_luz / distancia),
+                    distancia,
+                    0,
+                );
+
+                if t == Color::black() {
+                    sombreados += 1;
+                }
+            }
+        }
+
+        assert!(sombreados > 50, "solo {sombreados} puntos en sombra");
     }
 
     // ------------------------------------------------- piso y sombras

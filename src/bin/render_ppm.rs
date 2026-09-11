@@ -14,7 +14,7 @@ use std::process::ExitCode;
 
 use cubito_rtxr::framebuffer::Framebuffer;
 use cubito_rtxr::renderer::{render, Shading};
-use cubito_rtxr::scene::{camara_inicial, cubito, teseracto, Scene};
+use cubito_rtxr::scene::{camara_inicial, cubito, jaula, teseracto, Scene};
 
 const WIDTH: usize = 800;
 const HEIGHT: usize = 600;
@@ -33,7 +33,7 @@ fn main() -> ExitCode {
         Ok(opciones) => opciones,
         Err(fallo) => {
             eprintln!("error: {fallo}");
-            eprintln!("uso: render_ppm [salida.ppm] [--escena teseracto|cubo]");
+            eprintln!("uso: render_ppm [salida.ppm] [--escena teseracto|jaula|cubo]");
             eprintln!("                [--yaw grados] [--pitch grados]");
             eprintln!("                [--modo normales|albedo|difusa]");
             return ExitCode::FAILURE;
@@ -84,6 +84,7 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Opciones, String> {
             "--escena" => {
                 opciones.escena = match args.next().as_deref() {
                     Some("teseracto") => teseracto,
+                    Some("jaula") => jaula,
                     Some("cubo") => cubito,
                     Some(otro) => return Err(format!("escena desconocida: {otro}")),
                     None => return Err("--escena espera un nombre".to_string()),
