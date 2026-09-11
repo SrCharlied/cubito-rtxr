@@ -322,15 +322,30 @@ mod tests {
     }
 
     #[test]
-    fn el_fondo_queda_donde_no_hay_cubo() {
+    fn el_fondo_queda_por_encima_del_horizonte() {
+        // Solo las esquinas de **arriba**: desde que hay piso, las de abajo
+        // ven la losa, que es justamente lo que se quiere.
         let framebuffer = render_de(&cubito(), Shading::Diffuse);
         let fondo = cubito().background.to_u32();
 
         assert_eq!(framebuffer.buffer[0], fondo, "esquina superior izquierda");
         assert_eq!(
+            framebuffer.buffer[ANCHO - 1],
+            fondo,
+            "esquina superior derecha"
+        );
+    }
+
+    #[test]
+    fn el_piso_ocupa_la_parte_baja_de_la_imagen() {
+        let scene = cubito();
+        let framebuffer = render_de(&scene, Shading::Diffuse);
+        let fondo = scene.background.to_u32();
+
+        assert_ne!(
             framebuffer.buffer[ANCHO * ALTO - 1],
             fondo,
-            "esquina inferior derecha"
+            "la esquina inferior derecha deberia ver el piso"
         );
     }
 
@@ -348,6 +363,7 @@ mod tests {
         // plano.
         let scene = cubito();
         let camera = camara_inicial();
+        let cubo = scene.objects[0].material.albedo;
         let mut por_cara: Vec<(Vec3, f32)> = Vec::new();
 
         for y in 0..ALTO {
@@ -356,6 +372,13 @@ mod tests {
                 let Some((hit, objeto)) = scene.cast(&ray) else {
                     continue;
                 };
+
+                // El piso comparte normal con la cara de arriba del cubo:
+                // sin este filtro, la primera fila de la imagen registraria
+                // la losa como si fuera una cara del cubo.
+                if objeto.material.albedo != cubo {
+                    continue;
+                }
 
                 if por_cara
                     .iter()
@@ -441,17 +464,22 @@ mod tests {
     }
 
     #[test]
-    fn el_modo_albedo_pinta_el_cubo_de_un_solo_color() {
-        let framebuffer = render_de(&cubito(), Shading::Albedo);
+    fn el_modo_albedo_pinta_cada_objeto_de_un_solo_color() {
+        // Sin luces de por medio, la imagen entera se reduce a tres
+        // valores: fondo, cubo y piso.
         let scene = cubito();
+        let framebuffer = render_de(&scene, Shading::Albedo);
 
-        let fondo = scene.background.to_u32();
-        let albedo = scene.objects[0].material.albedo.to_u32();
+        let permitidos = [
+            scene.background.to_u32(),
+            scene.objects[0].material.albedo.to_u32(),
+            scene.objects[1].material.albedo.to_u32(),
+        ];
 
         assert!(framebuffer
             .buffer
             .iter()
-            .all(|&pixel| pixel == fondo || pixel == albedo));
+            .all(|pixel| permitidos.contains(pixel)));
     }
 
     // ------------------------------------------------------- teseracto
@@ -581,6 +609,58 @@ mod tests {
         let color = super::trace(&scene, &ray, Shading::Diffuse);
 
         assert!(color.b.is_finite(), "{color:?}");
+    }
+
+    #[test]
+    fn el_cubo_mate_proyecta_su_sombra_en_el_piso() {
+        // La sombra de un objeto opaco no deja pasar nada: el punto en
+        // penumbra se queda solo con el ambiente.
+        let scene = cubito();
+        let albedo = scene.objects[1].material.albedo;
+
+        // Donde cae la sombra: la recta que va de la luz al centro del cubo
+        // prolongada hasta el piso.
+        let luz = scene.lights[0].position;
+        let t = (luz.y - ALTURA_DEL_PISO) / luz.y;
+        let en_sombra = super::difusa(
+            &scene,
+            &punto_del_piso(luz.x - t * luz.x, luz.z - t * luz.z),
+            albedo,
+        );
+
+        let iluminado = super::difusa(&scene, &punto_del_piso(3.5, 3.5), albedo);
+
+        assert!(
+            iluminado.r > en_sombra.r * 3.0,
+            "iluminado {} contra sombra {}",
+            iluminado.r,
+            en_sombra.r
+        );
+        // El ambiente es el piso: la sombra no llega a negro absoluto.
+        assert!(en_sombra.r > 0.0);
+    }
+
+    #[test]
+    fn la_escena_del_enunciado_es_difusa_y_nada_mas() {
+        // Guarda del requisito: «un cubo en su raytracer solo con luz
+        // difusa». Si alguna vez se le cuela emision, transmision o halo a
+        // esta escena, esto lo detiene.
+        let scene = cubito();
+
+        assert!(!scene.bloom.esta_activo(), "la escena mate no lleva halo");
+
+        for (i, objeto) in scene.objects.iter().enumerate() {
+            let material = &objeto.material;
+
+            assert_eq!(material.emission, Color::black(), "objeto {i} emite");
+            assert_eq!(material.transmission, 0.0, "objeto {i} transmite");
+            assert_eq!(
+                material.inner_glow,
+                Color::black(),
+                "objeto {i} resplandece"
+            );
+            assert_eq!(material.edge_width, 0.0, "objeto {i} tiene marco");
+        }
     }
 
     // ------------------------------------------------- piso y sombras

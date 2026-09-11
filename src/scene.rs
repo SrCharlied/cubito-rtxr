@@ -84,26 +84,53 @@ impl Scene {
     }
 }
 
-/// El cubo mate del primer paso: opaco, naranja, una luz y nada mas.
+/// El cubo mate: opaco, naranja, una luz, un piso y **nada mas**.
 ///
-/// Se queda en el proyecto porque es la referencia contra la cual se lee el
-/// teseracto, y porque es la escena donde la difusa se ve sola, sin nada
-/// encima que la disimule.
+/// Es la escena del enunciado, y por eso se mantiene deliberadamente
+/// pobre: aqui no hay emision, ni transmision, ni halo. Lo unico que
+/// decide el color de un pixel es la ley de Lambert y si algo se
+/// interpone. Tambien es la referencia contra la cual se lee el teseracto.
 ///
 /// La luz va muy arriba y adelantada, deliberadamente **desalineada** del
 /// ojo: puesta detras de la camara, las tres caras visibles recibirian casi
 /// la misma cantidad de luz y el cubo se veria como un hexagono plano.
+///
+/// El cubo **flota** sobre el piso, igual que el teseracto, por dos
+/// razones. Apoyado, su sombra nace debajo de el y queda escondida por el
+/// propio cubo justo donde se la quiere ver. Y manteniendo la misma
+/// posicion en las dos escenas, alternar entre ellas con `C` y `T` compara
+/// materiales sin que la silueta se mueva de sitio.
 pub fn cubito() -> Scene {
     Scene {
-        objects: vec![Object {
-            shape: Cuboid::cubo(Vec3::zeros(), LADO),
-            material: albedo_naranja(),
-        }],
+        objects: vec![
+            Object {
+                shape: Cuboid::cubo(Vec3::zeros(), LADO),
+                material: albedo_naranja(),
+            },
+            // Piso frio y apagado: el contraste con el naranja separa el
+            // objeto del suelo sin que el suelo pida atencion.
+            losa(Color::from_hex(0x3E4657)),
+        ],
         lights: vec![Light::blanca(Vec3::new(1.0, 4.0, 2.0) * LADO * 0.75, 1.25)],
         background: Color::from_hex(0x10141C),
         // Nada pasa del blanco en esta escena: no hay rango perdido que
         // insinuar con un halo.
         bloom: Bloom::apagado(),
+    }
+}
+
+/// La losa que hace de piso, con el albedo que se le pase.
+///
+/// Es un `Cuboid` aplastado: la primitiva del proyecto alcanza, no hizo
+/// falta un plano. Las dos escenas comparten altura y extension para que
+/// el tope de camara —que sale de `ALTURA_DEL_PISO`— valga para ambas.
+fn losa(albedo: Color) -> Object {
+    Object {
+        shape: Cuboid::centrado(
+            Vec3::new(0.0, ALTURA_DEL_PISO - GROSOR_DEL_PISO * 0.5, 0.0),
+            Vec3::new(EXTENSION_DEL_PISO, GROSOR_DEL_PISO, EXTENSION_DEL_PISO),
+        ),
+        material: Material::opaco(albedo),
     }
 }
 
@@ -168,13 +195,7 @@ pub fn teseracto() -> Scene {
     // apenas 0.026 de energia lineal, y por mucha luz que reciba no
     // devuelve casi nada. Lo que se busca es una superficie sin caracter
     // que deje ver la luz que le llega.
-    let piso = Object {
-        shape: Cuboid::centrado(
-            Vec3::new(0.0, ALTURA_DEL_PISO - GROSOR_DEL_PISO * 0.5, 0.0),
-            Vec3::new(EXTENSION_DEL_PISO, GROSOR_DEL_PISO, EXTENSION_DEL_PISO),
-        ),
-        material: Material::opaco(Color::from_hex(0x5A6474)),
-    };
+    let piso = losa(Color::from_hex(0x5A6474));
 
     Scene {
         // El orden no le importa a `cast`, que se queda con el impacto mas
@@ -294,13 +315,20 @@ mod tests {
         // muestra volumen y no una sola cara de frente.
         let scene = cubito();
         let camera = camara_inicial();
+        let cubo = scene.objects[0].material.albedo;
         let mut vistas: Vec<Vec3> = Vec::new();
 
         for y in (0..600).step_by(20) {
             for x in (0..800).step_by(20) {
-                let Some((hit, _)) = scene.cast(&camera.ray_from_pixel(x, y, 800, 600)) else {
+                let Some((hit, objeto)) = scene.cast(&camera.ray_from_pixel(x, y, 800, 600)) else {
                     continue;
                 };
+
+                // El piso mira hacia arriba igual que la cara de arriba del
+                // cubo: contarlo inflaria la cuenta de caras vistas.
+                if objeto.material.albedo != cubo {
+                    continue;
+                }
 
                 if !vistas.iter().any(|n| (n - hit.normal).magnitude() < 1e-4) {
                     vistas.push(hit.normal);

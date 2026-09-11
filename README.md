@@ -5,8 +5,10 @@ Raytracer minimo en Rust con **camara orbital**. Dos escenas:
 - **Teseracto** — el cubo cosmico flotando sobre un piso: cascaron de
   vidrio azul, nucleo incandescente, marco de aristas encendido, halo,
   charco de luz y sombra tenida.
-- **Cubo mate** — el cubo opaco del primer paso, con iluminacion difusa
-  pura. Se queda como referencia: es donde la difusa se ve sola.
+- **Cubo mate** — el cubo opaco sobre el mismo piso, con **iluminacion
+  difusa pura**: Lambert, su sombra y nada mas. Ni emision, ni
+  transmision, ni halo. Es la escena del enunciado, y la referencia contra
+  la cual se lee el teseracto.
 
 Sin reflexion y sin refraccion.
 
@@ -14,7 +16,7 @@ Sin reflexion y sin refraccion.
 
 ```bash
 cargo run --release              # ventana interactiva
-cargo test                       # 107 pruebas, sin ventana
+cargo test                       # 110 pruebas, sin ventana
 ```
 
 Render sin ventana, util para dejar evidencia o para verificar en una
@@ -59,10 +61,12 @@ sobre un piso de ambiente que conserva la silueta.
 **4. El teseracto.** `material` agrega emision, transmision, absorcion,
 resplandor de volumen y marco de aristas; `bloom` agrega el halo.
 
-**5. El piso.** Que es tambien un `Cuboid`, solo que aplastado: no hizo
-falta primitiva nueva. Con el aparecen los rayos de sombra, que hasta aqui
-no tenian sentido —un objeto convexo y solo no puede darse sombra a si
-mismo—, y con ellos el tope de camara que impide bajar bajo la losa.
+**5. El piso**, en las dos escenas. Es tambien un `Cuboid`, solo que
+aplastado: no hizo falta primitiva nueva. Con el aparecen los rayos de
+sombra, que hasta aqui no tenian sentido —un objeto convexo y solo no
+puede darse sombra a si mismo—, y con ellos el tope de camara que impide
+bajar bajo la losa. En el cubo mate la sombra es dura y neutra, como
+corresponde a un opaco; en el teseracto sale azul.
 
 ## Por que el teseracto se ve asi
 
@@ -120,6 +124,10 @@ Siete piezas, y ninguna es un reflejo:
   debajo del piso». Se corrige la **posicion** despues de mover y no el
   angulo antes, porque el pitch admisible depende del radio y un tope
   calculado una vez queda flojo tras un zoom.
+- **Los dos cubos flotan sobre el piso.** Apoyados, su sombra nace debajo
+  y queda escondida por el propio objeto justo donde se la quiere ver. Y
+  compartiendo posicion, alternar entre las escenas con `C` y `T` compara
+  materiales sin que la silueta se mueva de sitio.
 - **Un rayo por pixel, sin antialiasing.** Las aristas salen duras.
 
 ## Estructura
