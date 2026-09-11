@@ -17,23 +17,58 @@ pub struct Light {
     pub color: Color,
     pub intensity: f32,
     pub reference_distance: f32,
+    /// Si un objeto entre esta luz y el punto puede bloquearla.
+    ///
+    /// No todas las luces representan una lampara. La del teseracto es un
+    /// resumen de la luz que escapa de **todo** su volumen: nace en el
+    /// centro, que esta dentro del nucleo opaco, asi que un rayo de sombra
+    /// hacia ella daria siempre bloqueado y el piso quedaria a oscuras bajo
+    /// el objeto que se supone que lo ilumina. Apagarle las sombras es
+    /// reconocer que el punto es una simplificacion de una fuente
+    /// extendida, no una lampara escondida dentro de una caja.
+    pub casts_shadows: bool,
 }
 
 impl Light {
+    /// Luz puntual completa. Las demas constructoras se apoyan en esta.
+    pub fn puntual(position: Vec3, color: Color, intensity: f32, reference_distance: f32) -> Self {
+        Light {
+            position,
+            color,
+            intensity,
+            reference_distance: reference_distance.max(1e-3),
+            casts_shadows: true,
+        }
+    }
+
     /// Luz blanca en `position`, con la distancia de referencia puesta en
     /// su propia distancia al origen: es el caso comun —la escena esta
     /// centrada en el origen— y deja la intensidad directamente legible.
+    ///
+    /// Una luz **en** el origen no tiene esa referencia natural, asi que
+    /// cae en 1.0 y conviene fijarla con `con_distancia_de_referencia`.
     pub fn blanca(position: Vec3, intensity: f32) -> Self {
-        Light {
-            position,
-            color: Color::white(),
-            intensity,
-            reference_distance: position.magnitude().max(f32::EPSILON),
-        }
+        let referencia = position.magnitude();
+        let referencia = if referencia > 1e-3 { referencia } else { 1.0 };
+
+        Light::puntual(position, Color::white(), intensity, referencia)
     }
 
     pub fn con_color(mut self, color: Color) -> Self {
         self.color = color;
+
+        self
+    }
+
+    pub fn con_distancia_de_referencia(mut self, reference_distance: f32) -> Self {
+        self.reference_distance = reference_distance.max(1e-3);
+
+        self
+    }
+
+    /// Deja que esta luz atraviese cualquier cosa. Ver `casts_shadows`.
+    pub fn sin_sombras(mut self) -> Self {
+        self.casts_shadows = false;
 
         self
     }
@@ -125,6 +160,26 @@ mod tests {
         let luz = Light::blanca(Vec3::new(0.0, 0.0, 4.0), 1.0);
 
         assert!((luz.attenuation(8.0) - 0.25).abs() < 1e-5);
+    }
+
+    #[test]
+    fn una_luz_arranca_proyectando_sombra() {
+        assert!(Light::blanca(Vec3::new(0.0, 4.0, 0.0), 1.0).casts_shadows);
+        assert!(
+            !Light::blanca(Vec3::new(0.0, 4.0, 0.0), 1.0)
+                .sin_sombras()
+                .casts_shadows
+        );
+    }
+
+    #[test]
+    fn una_luz_en_el_origen_no_explota() {
+        // Sin el piso en la referencia, `position.magnitude()` seria cero y
+        // la atenuacion, infinita.
+        let luz = Light::blanca(Vec3::zeros(), 1.0);
+
+        assert!(luz.attenuation(2.0).is_finite());
+        assert!(luz.reference_distance > 0.0);
     }
 
     #[test]

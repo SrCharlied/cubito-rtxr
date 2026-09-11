@@ -6,15 +6,19 @@
 //! teclado y presentar el framebuffer.
 //!
 //! El orden de construccion fue el del enunciado: primero el raycaster
-//! —camara, rayo primario, framebuffer— y despues la forma.
+//! —camara, rayo primario, framebuffer— y despues la forma. Sobre esa base
+//! se monto el teseracto: `material` agrega emision, transmision y marco de
+//! aristas, y `bloom` el halo, que es post-proceso y no trazado.
 
 pub mod aabb;
+pub mod bloom;
 pub mod camera;
 pub mod color;
 pub mod cuboid;
 pub mod framebuffer;
 pub mod hit;
 pub mod light;
+pub mod material;
 pub mod ray;
 pub mod ray_intersect;
 pub mod renderer;

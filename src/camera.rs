@@ -37,6 +37,16 @@ pub struct Camera {
     pub vertical_fov: f32,
     pub min_radius: f32,
     pub max_radius: f32,
+    /// Altura por debajo de la cual el ojo no puede bajar.
+    ///
+    /// Existe por el piso. Sin este tope, orbitar hacia abajo mete la
+    /// camara bajo la losa y lo unico que se ve es su cara inferior, que
+    /// es una pantalla negra: el usuario no lee eso como «estoy debajo del
+    /// piso», lo lee como que el programa se rompio.
+    ///
+    /// `f32::NEG_INFINITY` lo desactiva, y es el valor por omision: una
+    /// escena sin piso no tiene por que perder media esfera de orbita.
+    pub min_eye_height: f32,
 }
 
 impl Camera {
@@ -56,6 +66,7 @@ impl Camera {
             vertical_fov,
             min_radius: radius * Self::MIN_RADIUS_FACTOR,
             max_radius: radius * Self::MAX_RADIUS_FACTOR,
+            min_eye_height: f32::NEG_INFINITY,
         }
     }
 
@@ -63,6 +74,17 @@ impl Camera {
     pub fn with_radius_limits(mut self, min_radius: f32, max_radius: f32) -> Self {
         self.min_radius = min_radius;
         self.max_radius = max_radius;
+
+        self
+    }
+
+    /// Impide que el ojo baje de `altura`. Ver `min_eye_height`.
+    ///
+    /// Se aplica de inmediato: una camara construida ya por debajo del piso
+    /// sube al ras en vez de esperar al primer movimiento.
+    pub fn with_min_eye_height(mut self, altura: f32) -> Self {
+        self.min_eye_height = altura;
+        self.respetar_el_piso();
 
         self
     }
@@ -110,13 +132,53 @@ impl Camera {
         let radius = radio_vector.magnitude();
 
         // Yaw: angulo alrededor del eje Y. Pitch: altura sobre el plano XZ,
-        // con el signo invertido para que un delta positivo suba la vista.
+        // medido hacia abajo, asi que un delta **positivo baja el ojo**. Es
+        // por eso que la flecha arriba manda un delta negativo: subir la
+        // camara y bajar el pitch son lo mismo.
         let yaw_actual = radio_vector.z.atan2(radio_vector.x);
         let radio_xz = (radio_vector.x * radio_vector.x + radio_vector.z * radio_vector.z).sqrt();
         let pitch_actual = (-radio_vector.y).atan2(radio_xz);
 
         let yaw = (yaw_actual + delta_yaw) % (2.0 * PI);
         let pitch = (pitch_actual + delta_pitch).clamp(-PITCH_LIMIT, PITCH_LIMIT);
+
+        self.eye = self.center
+            + Vec3::new(
+                radius * yaw.cos() * pitch.cos(),
+                -radius * pitch.sin(),
+                radius * yaw.sin() * pitch.cos(),
+            );
+
+        self.respetar_el_piso();
+    }
+
+    /// Sube el ojo al ras del piso si quedo por debajo, conservando el
+    /// radio y el yaw.
+    ///
+    /// Se aplica **despues** de mover, y no como un recorte del angulo
+    /// antes de mover, porque el pitch maximo admisible depende del radio:
+    /// con el mismo angulo, un ojo lejano cae mas abajo que uno cercano. Un
+    /// tope de angulo calculado una vez quedaria flojo tras un zoom y
+    /// apretado tras el contrario. Corregir la posicion resultante vale
+    /// para los dos gestos y para cualquier orden entre ellos.
+    fn respetar_el_piso(&mut self) {
+        if self.eye.y >= self.min_eye_height {
+            return;
+        }
+
+        let radio_vector = self.eye - self.center;
+        let radius = radio_vector.magnitude();
+
+        if radius < f32::EPSILON {
+            return;
+        }
+
+        let yaw = radio_vector.z.atan2(radio_vector.x);
+        // `eye.y = center.y - radius * sin(pitch)`, de donde sale el pitch
+        // que deja el ojo exactamente a la altura minima. El recorte cubre
+        // el caso de un piso mas alto que el alcance del radio.
+        let altura = ((self.center.y - self.min_eye_height) / radius).clamp(-1.0, 1.0);
+        let pitch = altura.asin().min(PITCH_LIMIT);
 
         self.eye = self.center
             + Vec3::new(
@@ -149,6 +211,10 @@ impl Camera {
         let nuevo = (radius + delta).clamp(self.min_radius, self.max_radius);
 
         self.eye = self.center + radio_vector * (nuevo / radius);
+
+        // Alejarse con el ojo por debajo del centro tambien lo hunde: el
+        // zoom escala la componente vertical junto con el resto.
+        self.respetar_el_piso();
     }
 
     /// El encuadre actual, para poder volver a el mas tarde.
@@ -164,6 +230,7 @@ impl Camera {
     pub fn restore(&mut self, preset: CameraPreset) {
         self.eye = preset.eye;
         self.center = preset.center;
+        self.respetar_el_piso();
     }
 
     /// Rayo primario que atraviesa el centro del pixel `(x, y)`.
@@ -318,6 +385,74 @@ mod tests {
 
         assert!(arriba.y > 0.0, "{arriba:?}");
         assert!(abajo.y < 0.0, "{abajo:?}");
+    }
+
+    #[test]
+    fn sin_piso_la_orbita_puede_bajar_hasta_el_limite_del_pitch() {
+        // El tope es opcional: una escena sin piso no pierde media esfera.
+        // Un delta de pitch **positivo** baja el ojo: ver `orbit`.
+        let mut camera = camara();
+
+        for _ in 0..40 {
+            camera.orbit(0.0, PI / 8.0);
+        }
+
+        assert!(camera.eye.y < -4.0, "{:?}", camera.eye);
+    }
+
+    #[test]
+    fn con_piso_la_orbita_se_frena_al_ras() {
+        let mut camera = camara().with_min_eye_height(-1.0);
+
+        for _ in 0..40 {
+            camera.orbit(PI / 13.0, PI / 8.0);
+
+            assert!(camera.eye.y >= -1.0 - 1e-4, "{:?}", camera.eye);
+        }
+    }
+
+    #[test]
+    fn el_frenazo_conserva_el_radio() {
+        // Subir el ojo al ras no puede acercarlo ni alejarlo: seria un zoom
+        // fantasma al llegar al piso.
+        let mut camera = camara().with_min_eye_height(-1.0);
+        let inicial = camera.radius();
+
+        for _ in 0..20 {
+            camera.orbit(0.3, 0.4);
+        }
+
+        assert!(
+            (camera.radius() - inicial).abs() < 1e-4,
+            "{}",
+            camera.radius()
+        );
+    }
+
+    #[test]
+    fn alejarse_tampoco_hunde_el_ojo_bajo_el_piso() {
+        // El zoom escala la componente vertical junto con el resto, asi que
+        // con el ojo por debajo del centro, alejarse lo hunde.
+        let mut camera = camara().with_min_eye_height(-1.0);
+        camera.orbit(0.0, 0.3);
+        assert!(camera.eye.y < 0.0, "el ojo deberia haber bajado del centro");
+
+        camera.zoom(100.0);
+
+        assert!(camera.eye.y >= -1.0 - 1e-4, "{:?}", camera.eye);
+    }
+
+    #[test]
+    fn una_camara_construida_bajo_el_piso_sube_al_ras() {
+        let camera = Camera::new(
+            Vec3::new(0.0, -5.0, 1.0),
+            Vec3::zeros(),
+            Vec3::new(0.0, 1.0, 0.0),
+            DEFAULT_VERTICAL_FOV,
+        )
+        .with_min_eye_height(-1.0);
+
+        assert!(camera.eye.y >= -1.0 - 1e-4, "{:?}", camera.eye);
     }
 
     #[test]

@@ -6,7 +6,7 @@
 //! donde `minifb` no puede abrir nada.
 //!
 //! ```text
-//! cargo run --release --bin render_ppm -- salida.ppm --yaw 45 --pitch 20 --modo difusa
+//! cargo run --release --bin render_ppm -- salida.ppm --escena teseracto --yaw 45 --pitch 20
 //! ```
 
 use std::path::PathBuf;
@@ -14,7 +14,7 @@ use std::process::ExitCode;
 
 use cubito_rtxr::framebuffer::Framebuffer;
 use cubito_rtxr::renderer::{render, Shading};
-use cubito_rtxr::scene::{camara_inicial, cubito};
+use cubito_rtxr::scene::{camara_inicial, cubito, teseracto, Scene};
 
 const WIDTH: usize = 800;
 const HEIGHT: usize = 600;
@@ -25,6 +25,7 @@ struct Opciones {
     yaw: f32,
     pitch: f32,
     shading: Shading,
+    escena: fn() -> Scene,
 }
 
 fn main() -> ExitCode {
@@ -32,12 +33,14 @@ fn main() -> ExitCode {
         Ok(opciones) => opciones,
         Err(fallo) => {
             eprintln!("error: {fallo}");
-            eprintln!("uso: render_ppm [salida.ppm] [--yaw grados] [--pitch grados] [--modo normales|albedo|difusa]");
+            eprintln!("uso: render_ppm [salida.ppm] [--escena teseracto|cubo]");
+            eprintln!("                [--yaw grados] [--pitch grados]");
+            eprintln!("                [--modo normales|albedo|difusa]");
             return ExitCode::FAILURE;
         }
     };
 
-    let scene = cubito();
+    let scene = (opciones.escena)();
     let mut camera = camara_inicial();
     camera.orbit(opciones.yaw.to_radians(), opciones.pitch.to_radians());
 
@@ -70,6 +73,7 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Opciones, String> {
         yaw: 0.0,
         pitch: 0.0,
         shading: Shading::Diffuse,
+        escena: teseracto,
     };
     let mut args = args.peekable();
 
@@ -77,6 +81,14 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Opciones, String> {
         match arg.as_str() {
             "--yaw" => opciones.yaw = grados(args.next(), "--yaw")?,
             "--pitch" => opciones.pitch = grados(args.next(), "--pitch")?,
+            "--escena" => {
+                opciones.escena = match args.next().as_deref() {
+                    Some("teseracto") => teseracto,
+                    Some("cubo") => cubito,
+                    Some(otro) => return Err(format!("escena desconocida: {otro}")),
+                    None => return Err("--escena espera un nombre".to_string()),
+                }
+            }
             "--modo" => {
                 opciones.shading = match args.next().as_deref() {
                     Some("normales") => Shading::Normals,

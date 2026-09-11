@@ -1,4 +1,4 @@
-use std::ops::{Add, Mul};
+use std::ops::{Add, Mul, Sub};
 
 /// Decodifica un canal sRGB de 0..1 a intensidad lineal.
 ///
@@ -98,6 +98,18 @@ impl Mul<Color> for Color {
     }
 }
 
+/// Resta canal a canal. La usa el bloom en dos lugares: para quedarse con
+/// lo que pasa del umbral y para leer una ventana de una suma acumulada.
+/// Puede dar canales negativos, y esta bien: es aritmetica intermedia, y el
+/// recorte ocurre una sola vez, al empacar.
+impl Sub for Color {
+    type Output = Color;
+
+    fn sub(self, otro: Color) -> Color {
+        Color::new(self.r - otro.r, self.g - otro.g, self.b - otro.b)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,6 +153,13 @@ mod tests {
         let sobreexpuesto = Color::new(4.0, 1.0, -2.0);
 
         assert_eq!(sobreexpuesto.to_u32(), 0xFFFF00);
+    }
+
+    #[test]
+    fn la_resta_admite_canales_negativos() {
+        let diferencia = Color::new(0.25, 0.5, 0.75) - Color::white();
+
+        assert!(diferencia.r < 0.0 && diferencia.g < 0.0 && diferencia.b < 0.0);
     }
 
     #[test]

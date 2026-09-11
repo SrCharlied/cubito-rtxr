@@ -39,6 +39,27 @@ impl Cuboid {
         Cuboid::centrado(centro, Vec3::new(lado, lado, lado))
     }
 
+    /// Longitud del segmento del rayo que queda **dentro** del cuboide.
+    ///
+    /// Es lo que la ley de Beer necesita para saber cuanto medio cruzo la
+    /// luz. Depende de la **direccion**, no de por donde entro el rayo:
+    /// todos los rayos perpendiculares a una cara cruzan la misma cuerda,
+    /// uno diagonal cruza mas, y uno que raspa una arista casi nada. Con
+    /// una camara en perspectiva eso es justo lo que hace que el centro del
+    /// teseracto salga mas saturado que su silueta. Sale de las dos
+    /// distancias que el slab test ya calcula, y cero si el rayo no toca.
+    ///
+    /// Repite el slab test que `ray_intersect` acaba de hacer. Es una
+    /// duplicacion consciente: guardar el intervalo dentro del `Hit`
+    /// obligaria a que toda primitiva futura —una esfera, un plano— cargue
+    /// un dato que solo tiene sentido en un volumen.
+    pub fn thickness(&self, ray: &Ray) -> f32 {
+        match self.bounds.hit(ray, EPSILON, f32::INFINITY) {
+            Some(intervalo) => (intervalo.t_exit - intervalo.t_enter).max(0.0),
+            None => 0.0,
+        }
+    }
+
     /// Normal exterior de la cara perpendicular a `eje`.
     ///
     /// El signo sale de hacia donde viaja el rayo: si avanza en `+eje`,
@@ -212,6 +233,47 @@ mod tests {
             );
             assert_eq!(hit.normal, direccion, "eje {eje}");
         }
+    }
+
+    #[test]
+    fn el_grosor_por_el_centro_es_el_lado_completo() {
+        let ray = Ray::new(Vec3::new(0.0, 0.0, 5.0), Vec3::new(0.0, 0.0, -1.0));
+
+        assert!((cubo_unitario().thickness(&ray) - 2.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn el_grosor_depende_de_como_cruza_el_rayo() {
+        // Es la razon de ser del grosor, y conviene tener claro de que
+        // depende: **no** de por donde entra el rayo, sino de su
+        // direccion. Todos los rayos perpendiculares a una cara cruzan la
+        // misma cuerda; uno diagonal cruza mas, y uno que raspa una arista
+        // casi nada.
+        let cubo = cubo_unitario();
+        let diagonal = Vec3::new(-1.0, 0.0, -1.0).normalize();
+
+        let perpendicular = cubo.thickness(&Ray::new(
+            Vec3::new(0.0, 0.0, 5.0),
+            Vec3::new(0.0, 0.0, -1.0),
+        ));
+        let por_la_diagonal = cubo.thickness(&Ray::new(Vec3::new(5.0, 0.0, 5.0), diagonal));
+        // Misma direccion, corrida una unidad: entra y sale por el mismo
+        // cuadrante y apenas muerde el volumen.
+        let raspando = cubo.thickness(&Ray::new(Vec3::new(5.0, 0.0, 4.0), diagonal));
+
+        assert!((perpendicular - 2.0).abs() < 1e-4, "{perpendicular}");
+        assert!(
+            (por_la_diagonal - 2.0 * 2.0_f32.sqrt()).abs() < 1e-3,
+            "{por_la_diagonal}"
+        );
+        assert!(raspando > 0.0 && raspando < perpendicular, "{raspando}");
+    }
+
+    #[test]
+    fn el_grosor_de_un_rayo_que_no_toca_es_cero() {
+        let ray = Ray::new(Vec3::new(3.0, 0.0, 5.0), Vec3::new(0.0, 0.0, -1.0));
+
+        assert_eq!(cubo_unitario().thickness(&ray), 0.0);
     }
 
     #[test]

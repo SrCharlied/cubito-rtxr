@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use cubito_rtxr::framebuffer::Framebuffer;
 use cubito_rtxr::renderer::{render, Shading};
-use cubito_rtxr::scene::{camara_inicial, cubito, preset_inicial};
+use cubito_rtxr::scene::{camara_inicial, cubito, preset_inicial, teseracto};
 
 const WIDTH: usize = 800;
 const HEIGHT: usize = 600;
@@ -35,13 +35,20 @@ fn main() {
     let mut window = Window::new("cubito-rtxr", WIDTH, HEIGHT, WindowOptions::default())
         .expect("no se pudo abrir la ventana");
 
-    let scene = cubito();
+    // Las dos escenas se construyen una sola vez y se alternan por
+    // referencia: son baratas, pero rehacerlas en cada cambio de tecla
+    // volveria a decodificar colores y a reservar vectores por nada.
+    let escena_teseracto = teseracto();
+    let escena_cubo = cubito();
+    let mut es_teseracto = true;
+
     let mut camera = camara_inicial();
     let hero = preset_inicial();
     let mut shading = Shading::Diffuse;
 
     println!("cubito-rtxr");
     println!("  flechas  orbitar     W / S / rueda  zoom     R  encuadre inicial");
+    println!("  T  teseracto     C  cubo mate");
     println!("  1  normales     2  albedo     3  difusa     Escape  salir");
 
     // El primer cuadro cuenta como cambio pendiente, para que la ventana
@@ -111,13 +118,32 @@ fn main() {
             redibujar = true;
         }
 
+        // ---------------------------------------------------------- escena
+        //
+        // El cubo mate se deja a un toque de distancia porque es la
+        // referencia: alternar entre los dos es la forma mas rapida de ver
+        // que aporta cada capa del teseracto.
+        for (tecla, quiere_teseracto) in [(Key::T, true), (Key::C, false)] {
+            if window.is_key_pressed(tecla, KeyRepeat::No) && es_teseracto != quiere_teseracto {
+                es_teseracto = quiere_teseracto;
+                redibujar = true;
+            }
+        }
+
         // -------------------------------------------------------- presentar
         //
-        // Se traza solo cuando algo cambio: un cubo a 800 x 600 es barato,
-        // pero no hay razon para gastar medio millon de rayos por cuadro en
-        // repetir la misma imagen.
+        // Se traza solo cuando algo cambio. El teseracto cuesta mas que el
+        // cubo mate —cada rayo primario atraviesa el vidrio y el halo pasa
+        // seis veces sobre la imagen—, y no hay razon para pagarlo por
+        // cuadro para repetir la misma imagen.
         if redibujar {
-            render(&mut framebuffer, &scene, &camera, shading);
+            let scene = if es_teseracto {
+                &escena_teseracto
+            } else {
+                &escena_cubo
+            };
+
+            render(&mut framebuffer, scene, &camera, shading);
             redibujar = false;
         }
 
